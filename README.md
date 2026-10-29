@@ -193,3 +193,5 @@ node --test test/          # 56 条，纯策略层 + 假宿主集成层
 ## License
 
 MIT
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
