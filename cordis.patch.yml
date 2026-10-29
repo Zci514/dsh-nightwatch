@@ -1,0 +1,28 @@
+# 守夜（@local/dsh-run-until）
+#
+# 让一个会话一直续跑到指定钟点，到点自己停。
+# 挂载后：输入框左下角多一颗「☽ 守夜」按钮，另有一条 /run-until 指令。
+- insert:
+    - id: run-until
+      name: '@local/dsh-run-until'
+      config:
+        # 默认值全部可以在这里改；数值越界会被 lib/policy.js 钳制。
+        enabled: true
+        # 两次自动续跑之间的最小间隔（毫秒）
+        minIntervalMs: 1500
+        # 硬上限轮次，0 = 只看钟点
+        maxRounds: 400
+        # 连续几轮一个工具都没调就停（模型只回「好的」不动手时止损），0 = 不检查
+        maxIdleRounds: 4
+        # 连续出错几次就停
+        maxConsecutiveErrors: 3
+        # 到点时若还有一轮在跑：0 = 让它自己跑完；>0 = 超过这个毫秒数就掐断
+        graceMs: 0
+        # 空转巡检测的间隔（毫秒），也是"漏网会话"的兜底周期
+        heartbeatMs: 20000
+        # 刚开启后多久内不主动开第一轮（避免和正在输入的那个人抢）
+        armKickDelayMs: 20000
+        # 最后这几分钟改成收尾语气
+        wrapUpMinutes: 10
+        # 截断（max-tokens）交给 continue-on-limit 处理，这里让路
+        skipTruncatedTurnEnd: true

@@ -1,0 +1,55 @@
+{
+  "name": "@local/dsh-run-until",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "守夜：给 DeepSeek Harness 的输入框加一颗按钮，选个钟点，会话一直续跑到那时自动停",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "automation",
+    "scheduler"
+  ],
+  "homepage": "https://github.com/Zci514/dsh-run-until#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zci514/dsh-run-until.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Zci514/dsh-run-until/issues"
+  },
+  "author": "Zci514",
+  "license": "MIT",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/policy.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}
