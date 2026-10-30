@@ -177,7 +177,7 @@ ln -s /path/to/dsh-nightwatch ~/.dsh/profiles/node_modules/dsh-nightwatch
 | `maxConsecutiveErrors` | `3` | 1–100 | 连续几轮出错就收手 |
 | `heartbeatMs` | `20000` | 2000–300000 | 心跳间隔（下限 2 秒） |
 | `armKickDelayMs` | `20000` | 0–600000 | 开启后先等这么久再补第一句，避免和你正在说的话抢 |
-| `wrapUpMinutes` | `10` | 0–240 | 到点前多久切收尾语气；0 = 不切 |
+| `wrapUpMinutes` | `10` | 0–240 | 到点前多久切收尾语气；0 = 不切。**实际窗口最多是剩余时间的一半**，免得十分钟的默认值把五分钟的守夜整段吃掉 |
 | `graceMs` | `0` | 0–3600000 | 到点后还允许在跑的那轮继续多久，超时才强制中断 |
 | `skipTruncatedTurnEnd` | `true` | 布尔 | 输出被截断时让给 `continue-on-limit` 插件，由心跳兜底 |
 | `continueText` | 见 `lib/policy.js` | 1–4000 字符 | 续跑文案，支持 `{now}` `{deadline}` `{left}` |
@@ -195,7 +195,7 @@ ln -s /path/to/dsh-nightwatch ~/.dsh/profiles/node_modules/dsh-nightwatch
 ```bash
 git clone https://github.com/Zci514/dsh-nightwatch.git
 cd dsh-nightwatch
-node --test test/          # 64 条，纯策略层 + 假宿主集成层 + 按钮路由层
+node --test test/          # 66 条，纯策略层 + 假宿主集成层 + 按钮路由层
 ```
 
 - `lib/policy.js` — 纯函数：时间解析、判定、文案、面板快照、记录回收规则。零依赖，可单独测。
@@ -218,6 +218,9 @@ DSH 给自己的 `/api` 和 `/connect` 上了 Host/Origin 检查，但不给插�
 
 - `Sec-Fetch-Site` 只要不是 `same-origin` / `none` → `403`；
 - 有 `Origin` 时其 host 必须等于请求的 `Host`，否则 `403`；
+- `POST` 只收 JSON：`content-type` 是 `application/json` / `text/plain` 或为空才处理，
+  `urlencoded`、`multipart/form-data` 一律 `415`。表单只能发这几种「无需预检」的类型，
+  光靠 Origin 挡不住「页面谎报空 Origin」，所以要再锁一道 body 类型；
 - 两个头都没有（curl、脚本、测试）→ 放行（这道闸防的是「浏览器里别的页面」，不是认证）。
 
 ## 已知限制

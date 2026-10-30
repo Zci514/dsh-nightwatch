@@ -497,9 +497,27 @@ describe('plugin integration', () => {
     host.dispose();
   });
 
-  it('switches to the wrap-up text near the deadline', async () => {
+  it('does not spend a whole short watch in wrap-up mode', async () => {
+    // The configured window is a ceiling: with a 10-minute default and a 1-minute
+    // watch, every round would be told "start wrapping up" and the person would
+    // never get one ordinary "keep going" turn. The real window is at most half
+    // the remaining span.
     const { host, agent } = await mount({ wrapUpMinutes: 240 });
     await arm(host, agent, '+600ms');
+    agent.startTurn();
+    agent.endTurn(host);
+    await until(() => agent.received.length === 1, { label: 'first continuation' });
+    assert.match(agent.received[0].content[0].text, /距离/u);
+    assert.doesNotMatch(agent.received[0].content[0].text, /收尾/u);
+    host.dispose();
+  });
+
+  it('switches to the wrap-up text inside the effective window', async () => {
+    // Half of a 1.5s watch is 750ms, so the wrap-up wording starts there and the
+    // behaviour is still visible inside a fast test.
+    const { host, agent } = await mount({ wrapUpMinutes: 240 });
+    await arm(host, agent, '+1500ms');
+    await new Promise((r) => setTimeout(r, 900));
     agent.startTurn();
     agent.endTurn(host);
     await until(() => agent.received.length === 1, { label: 'wrap-up continuation' });
@@ -574,6 +592,37 @@ describe('plugin integration', () => {
     }
     // Round 1 still continues; round 2 hits the streak and stops the watch.
     assert.equal(agent.received.length, 1);
+    host.dispose();
+  });
+
+  it('does not double-send when the watch is re-armed mid-delivery', async () => {
+    // The nudge parks in `whenIdle()`. If the person re-arms while it is parked,
+    // that call belongs to an older generation of the watch: it must drop its
+    // message rather than deliver one next to the fresh watch's own send.
+    const { host, agent } = await mount({ heartbeatMs: 2_000 });
+    await arm(host, agent, '+10m');
+    agent.startTurn();
+    // A turn/end while the agent is still running: `send()` parks in whenIdle().
+    host.emit('session/event', agent.session, {
+      type: 'turn/end',
+      data: { turn: 1, reason: { kind: 'completed' } },
+    });
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(agent.received.length, 0, 'the parked send has not delivered yet');
+
+    // Re-arm, then let the agent go idle *without* an `agent/status` event, so
+    // only the parked call can deliver inside this window.
+    await arm(host, agent, '+20m');
+    agent.status = 'idle';
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(agent.received.length, 0, 'the stale send dropped its message');
+
+    // The normal watchdog path still opens the next turn, once.
+    await until(() => agent.received.length === 1, {
+      label: 'one nudge from the new watch',
+      timeoutMs: 6_000,
+    });
+    assert.match(agent.received[0].content[0].text, /距离/u);
     host.dispose();
   });
 
@@ -878,6 +927,25 @@ describe('button routes', () => {
       body: { sessionId: agent.session.id, until: '+90m' },
     });
     assert.equal(curl.status, 200);
+
+    // A cross-site *form* post is a "simple" request too — the browser fires it
+    // with no preflight, so `sameOrigin` alone would let it through if the page
+    // also lies about `Origin` being empty. The body type is the second lock.
+    const form = await host.request({
+      method: 'POST',
+      path: '/nightwatch/arm',
+      headers: { host: HOST, 'content-type': 'application/x-www-form-urlencoded' },
+      body: { sessionId: agent.session.id, until: '+90m' },
+    });
+    assert.equal(form.status, 415);
+    assert.equal(form.json.error, 'json-required');
+    const multipart = await host.request({
+      method: 'POST',
+      path: '/nightwatch/arm',
+      headers: { host: HOST, 'content-type': 'multipart/form-data; boundary=x' },
+      body: { sessionId: agent.session.id, until: '+90m' },
+    });
+    assert.equal(multipart.status, 415);
     host.dispose();
   });
 

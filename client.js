@@ -206,38 +206,46 @@ window.__ModuleLoader__.load({
         const cardRef = useRef(null);
         const [anchor, setAnchor] = useState(null);
 
-        useEffect(() => {
-          if (typeof props.onActiveChange === 'function') props.onActiveChange(false);
-        }, []);
-
         const wrapMinutes = snapshot?.wrapUpMinutes ?? 10;
 
         const pull = useCallback(async () => {
-          if (typeof sessionId !== 'string' || sessionId === '') return;
+          if (typeof sessionId !== 'string' || sessionId === '') {
+            setUnavailable('session');
+            return;
+          }
           try {
             const res = await fetch(
               '/nightwatch/state?sessionId=' + encodeURIComponent(sessionId),
-              { cache: 'no-store' },
+              { cache: 'no-store', headers: { accept: 'application/json' } },
             );
-            if (res.status === 404) {
-              // 404 is the only way a missing route and an unloaded session both
-              // present themselves, so read the error the host chose to send.
-              let body = null;
-              try {
-                body = await res.json();
-              } catch {
-                body = null;
-              }
-              setUnavailable(
-                body !== null && body.error === 'unknown-session' ? 'session' : 'host',
-              );
+            // A server that cannot answer with JSON is not this plugin's host
+            // half: the SPA fallback and a plain 404 both answer with an empty
+            // body, and leaving the pill in "还没开守夜" hides a broken install.
+            let body = null;
+            try {
+              body = await res.json();
+            } catch {
+              body = null;
+            }
+            if (body === null) {
+              setUnavailable('host');
               return;
             }
-            if (!res.ok) return;
-            const body = await res.json();
-            if (body && body.ok === true) {
+            if (res.status === 404) {
+              // The host answered, so it is mounted; the session id is the part
+              // that is unknown.
+              setUnavailable(body.error === 'unknown-session' ? 'session' : 'host');
+              return;
+            }
+            if (!res.ok) {
+              setUnavailable('host');
+              return;
+            }
+            if (body.ok === true) {
               setSnapshot(body.value);
               setUnavailable(null);
+            } else {
+              setUnavailable('host');
             }
           } catch {
             // A dropped poll is not worth surfacing; the next one will land.
@@ -371,10 +379,14 @@ window.__ModuleLoader__.load({
           ? Math.max(0, snapshot.deadline - Date.now())
           : 0;
         const left = armed ? shortLeft(remainingMs) : '';
+        // The host computes the *effective* window (a short watch wraps up
+        // earlier than the configured ceiling), so trust its verdict and fall
+        // back to the raw number only if it is missing.
         const stoppingSoon =
           armed &&
           (snapshot.stoppingSoon === true ||
-            remainingMs <= (snapshot.wrapUpMinutes ?? 10) * 60_000);
+            (snapshot.wrapUpWindowMs === undefined &&
+              remainingMs <= (snapshot.wrapUpMinutes ?? 10) * 60_000));
         const rounds = snapshot?.rounds ?? 0;
         const cap = snapshot?.roundsCap ?? 0;
         const dead = unavailable !== null;
@@ -530,6 +542,13 @@ window.__ModuleLoader__.load({
           card !== null && ReactDOM !== null && ReactDOM.createPortal
             ? ReactDOM.createPortal(card, document.body)
             : card;
+
+        // No session, no button: a pill that cannot do anything is worse than
+        // an empty toolbar slot, and the slot renders on the composer before a
+        // session exists.
+        if (typeof sessionId !== 'string' || sessionId === '') {
+          return h('div', { className: 'dsh-nw-wrap' }, h('style', { key: 'css' }, CSS));
+        }
 
         return h(
           'div',
