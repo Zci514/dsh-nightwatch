@@ -1,7 +1,9 @@
 {
   "name": "dsh-nightwatch",
   "version": "1.2.2",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "description": "守夜：给 DeepSeek Harness 的输入框加一颗按钮，选个钟点，会话一直续跑到那时自动停",
   "keywords": [
