@@ -1,5 +1,8 @@
 # dsh-nightwatch — 让对话一直跑到某个钟点，然后自己停
 
+[![npm](https://img.shields.io/npm/v/dsh-nightwatch?style=flat-square)](https://www.npmjs.com/package/dsh-nightwatch)
+[![license](https://img.shields.io/npm/l/dsh-nightwatch?style=flat-square)](LICENSE)
+
 > Keep a DeepSeek Harness session working until a wall-clock deadline, then stop.
 > One button in the composer, nothing to type.
 
@@ -64,38 +67,41 @@
 
 本插件按 DSH 的「本地 bundle」方式装载：在你的 profile 目录里加一条依赖 + 一条 bundle 引用。
 
-```bash
-# 1) 放到本地任意目录，例如 D:/dsh/dsh-nightwatch
-git clone https://github.com/Zci514/dsh-nightwatch.git D:/dsh/dsh-nightwatch
+### 从 npm 装（推荐）
 
-# 2) 让 profile 能解析到它（Windows 用 junction，macOS/Linux 用软链）
-#    Windows（注意挂在 profiles\node_modules 下，不带作用域）：
-cmd //c "mklink /J \"%USERPROFILE%\\.dsh\\profiles\\node_modules\\dsh-nightwatch\" D:\\dsh\\dsh-nightwatch"
-#    macOS / Linux：
-ln -s /path/to/dsh-nightwatch ~/.dsh/profiles/node_modules/dsh-nightwatch
+已发布在 npm：**https://www.npmjs.com/package/dsh-nightwatch**
+
+```bash
+# profile 目录就是 ~/.dsh/profiles/<你的 profile>
+cd ~/.dsh/profiles/<你的 profile>
+npm i dsh-nightwatch
 ```
 
-然后编辑 `~/.dsh/profiles/<你的 profile>/package.json`：
+然后在同一个 `package.json` 的 `dsh.profile.bundles` 末尾加一项：
 
 ```json
 {
-  "dependencies": {
-    "dsh-nightwatch": "file:D:/dsh/dsh-nightwatch"
-  },
-  "dsh": {
-    "profile": {
-      "bundles": ["…原有的不要动…", "dsh-nightwatch"]
-    }
-  }
+  "dependencies": { "dsh-nightwatch": "^1.2.2" },
+  "dsh": { "profile": { "bundles": ["…原有的不要动…", "dsh-nightwatch"] } }
 }
 ```
 
-`bundles` 数组的顺序就是加载顺序，把 `dsh-nightwatch` 追加到最后即可。
-`pnpm-lock.yaml` 里那三条 importer/packages/snapshots 记录要么用 `pnpm install` 自动生成，
-要么手工补（补完记得保留段间空行）。
+`npm i` 会把包放进 `node_modules/dsh-nightwatch`，**不需要再建 junction**。
 
-最后重启 DSH。注意：**宿主侧的 `lib/*.js` 改动必须重启才生效**；
-`client.js`（按钮那一半）由 `dsh-client-hmr` 每 500ms 轮询，改完会自动热重载。
+### 从源码装（想改代码时用这个）
+
+```bash
+git clone https://github.com/Zci514/dsh-nightwatch.git D:/dsh/dsh-nightwatch
+
+# Windows：把 profile 指向源码目录
+cmd //c "mklink /J \"%USERPROFILE%\.dsh\profiles\node_modules\dsh-nightwatch\" D:\dsh\dsh-nightwatch"
+# macOS / Linux：
+ln -s /path/to/dsh-nightwatch ~/.dsh/profiles/node_modules/dsh-nightwatch
+```
+
+`dependencies` 里写 `"dsh-nightwatch": "file:D:/dsh/dsh-nightwatch"`，`bundles` 同样追加一项。
+
+无论哪种装法，`bundles` 数组的顺序都是加载顺序，把 `dsh-nightwatch` 追加到最后即可。
 
 ### 从 1.1.0（`@local/dsh-run-until`）升上来
 
