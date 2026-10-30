@@ -1,13 +1,13 @@
 # dsh-nightwatch — 让对话一直跑到某个钟点，然后自己停
 
 > Keep a DeepSeek Harness session working until a wall-clock deadline, then stop.
-> A one-click button in the composer plus a `/nightwatch` command.
+> One button in the composer, nothing to type.
 
 给 DSH 的输入框加一颗「☽ 守夜」按钮：点一下选个截止时间，之后每轮答完就自动接一句「继续」，
 一直跑到点为止；到点不再开口。适合「去睡觉，让它自己干活到早上」这种场景。
 
-同样的功能也有一条 `/nightwatch` 指令（在输入框里敲 `/nightwatch 22:30` 一样能用），
-但平时用按钮就够了 —— 按钮不会在对话流里留下任何痕迹。
+**这个插件只有按钮，没有指令。** 开关、改时间、立刻停、看还剩多久，全在那一颗按钮和它的卡片里；
+不需要记任何语法，也不会在对话流里留下任何东西。
 
 ![输入框里的守夜按钮](docs/button-idle.png)
 
@@ -34,21 +34,28 @@
 按钮上没有任何文字提示你是「第一次用」——它就是一颗常驻的小药丸，安静地待在那儿。
 万一宿主那一半没挂上，按钮会变灰并写明原因（「宿主未挂载」/「会话未加载」），旁边一颗「重试」。
 
-## 用法（指令）
+## 没有指令
 
-也可以直接在输入框里敲指令，效果完全一样。`/run-until` 是改名前的旧名，
-仍然可用（1.1.0 的肌肉记忆不用改）。
+这个插件**默认不注册任何 slash 指令**。所有操作都在按钮卡片里：
+
+| 想做的事 | 怎么做 |
+| --- | --- |
+| 开起来 | 点 `☽ 守夜` → 点一个快捷项，或自己填时间 → 「开始守夜」 |
+| 看还剩多久、接了轮 | 药丸上的数字本身就在倒计时；点开卡片还有一行完整状态 |
+| 改到别的时间 | 点开卡片 → 选新的时间 → 按钮上的「改到」 |
+| 立刻停 | 点开卡片 → 红色「立刻停」 |
+
+`enableCommand: true` 会额外注册 `/nightwatch`（以及 1.1.0 的旧名 `/run-until`），
+只给**没有按钮**的场景用——无头会话、脚本、远程 shell。装了它就有两套界面同时存在，
+所以默认关掉。开启后的写法：
 
 | 写法 | 含义 |
 | --- | --- |
 | `/nightwatch 22:30` | 跑到今晚 22:30（如果现在已经过了 22:30，就是明天 22:30） |
-| `/nightwatch 07:00` | 跑到明早 7:00 |
-| `/nightwatch 明天 07:00` | 同上，写明「明天」更不容易看错 |
 | `/nightwatch +90m` | 再跑 90 分钟 |
-| `/nightwatch +1h30m` | 组合写法：1 小时 30 分 |
-| `/nightwatch +2d` | 两天（一般用不到，但支持） |
+| `/nightwatch 明天 07:00` | 明早 7:00（也接受 `07:00 明天`） |
 | `/nightwatch 2026-10-30 06:00` | 指定日期时间 |
-| `/nightwatch` · `/nightwatch help` | 查看当前状态：跑到几点、还剩多久、已经接了几轮 |
+| `/nightwatch` | 查看当前状态 |
 | `/nightwatch stop` | 立刻停（也接受 停 / 取消 / off / clear） |
 
 支持全角冒号 `22：30`，也支持 `7:05` 这种不补零的写法。按钮卡片里的输入框认的是同一套写法。
@@ -130,7 +137,7 @@ ln -s /path/to/dsh-nightwatch ~/.dsh/profiles/node_modules/dsh-nightwatch
 | 轮次上限 | 默认 400 轮（`maxRounds`），防止无限烧 token；0 表示不限 |
 | 连续出错 | 默认连续 3 轮报错就停（`maxConsecutiveErrors`），避免死循环刷错误 |
 | 连续没动手 | 默认连续 4 轮一个工具都没调就停（`maxIdleRounds`）——模型只回「好的」不动手时，每轮都白烧一整个上下文 |
-| 你手动中止 | 在按钮卡片里点「立刻停」、或发 `/nightwatch stop`，立即停 |
+| 你手动中止 | 在按钮卡片里点「立刻停」，立即停 |
 | 会话被删除 | 记录一并清掉 |
 
 到点时会话正在跑的那一轮**不会**被强行掐断（`graceMs: 0` 的默认含义是「只是不再开新轮」），
@@ -163,12 +170,13 @@ ln -s /path/to/dsh-nightwatch ~/.dsh/profiles/node_modules/dsh-nightwatch
 | 键 | 默认 | 范围 | 作用 |
 | --- | --- | --- | --- |
 | `enabled` | `true` | 布尔 | 总开关。关掉后按钮还在，但不会续跑 |
+| `enableCommand` | `false` | 布尔 | 是否额外注册 `/nightwatch` 指令。给无头会话/脚本用；GUI 里装了就有两套界面 |
 | `minIntervalMs` | `1500` | 0–600000 | 两轮之间最少间隔，防空转 |
 | `maxRounds` | `400` | 0–100000 | 最多替你说几次；0 = 不限 |
 | `maxIdleRounds` | `4` | 0–100 | 连续几轮没调工具就收手；0 = 不检查 |
 | `maxConsecutiveErrors` | `3` | 1–100 | 连续几轮出错就收手 |
 | `heartbeatMs` | `20000` | 2000–300000 | 心跳间隔（下限 2 秒） |
-| `armKickDelayMs` | `20000` | 0–600000 | 开启后先等这么久再补第一句，避免和你的正式指令抢 |
+| `armKickDelayMs` | `20000` | 0–600000 | 开启后先等这么久再补第一句，避免和你正在说的话抢 |
 | `wrapUpMinutes` | `10` | 0–240 | 到点前多久切收尾语气；0 = 不切 |
 | `graceMs` | `0` | 0–3600000 | 到点后还允许在跑的那轮继续多久，超时才强制中断 |
 | `skipTruncatedTurnEnd` | `true` | 布尔 | 输出被截断时让给 `continue-on-limit` 插件，由心跳兜底 |
@@ -187,11 +195,11 @@ ln -s /path/to/dsh-nightwatch ~/.dsh/profiles/node_modules/dsh-nightwatch
 ```bash
 git clone https://github.com/Zci514/dsh-nightwatch.git
 cd dsh-nightwatch
-node --test test/          # 65 条，纯策略层 + 假宿主集成层 + 按钮路由层
+node --test test/          # 64 条，纯策略层 + 假宿主集成层 + 按钮路由层
 ```
 
 - `lib/policy.js` — 纯函数：时间解析、判定、文案、面板快照、记录回收规则。零依赖，可单独测。
-- `lib/index.js` — 宿主胶水：事件订阅、消息投递、原子持久化、命令注册、按钮用的 HTTP 路由。
+- `lib/index.js` — 宿主胶水：事件订阅、消息投递、原子持久化、按钮用的 HTTP 路由（以及默认关闭的指令）。
 - `client.js` — 浏览器半边：输入框那颗按钮和卡片（`window.__ModuleLoader__` 包一层）。
 - `test/fake-host.js` — 假宿主，只实现插件真正用到的那几个面（含一个能驱动 HTTP 路由的假 `webServer`）。
 - `test/nightwatch.test.js` — 三层测试。

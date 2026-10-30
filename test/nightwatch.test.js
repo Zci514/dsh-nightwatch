@@ -26,7 +26,6 @@ const { FakeHost, until } = await import('./fake-host.js');
 const {
   DEFAULTS,
   parseDeadline,
-  parseCommand,
   readSettings,
   decide,
   decideHeartbeat,
@@ -103,23 +102,6 @@ describe('parseDeadline', () => {
     const got = parseDeadline('24:00', NOW);
     assert.equal(got.ok, true);
     assert.equal(new Date(got.at).getTime(), new Date('2026-10-30T00:00:00+08:00').getTime());
-  });
-});
-
-describe('parseCommand', () => {
-  it('reads the three words this command owns', () => {
-    assert.equal(parseCommand('').kind, 'show');
-    assert.equal(parseCommand('  ').kind, 'show');
-    assert.equal(parseCommand('状态').kind, 'show');
-    assert.equal(parseCommand('stop').kind, 'stop');
-    assert.equal(parseCommand('停').kind, 'stop');
-    assert.equal(parseCommand('OFF').kind, 'stop');
-  });
-
-  it('treats everything else as a deadline, including nonsense', () => {
-    assert.deepEqual(parseCommand('22:30'), { kind: 'arm', raw: '22:30' });
-    assert.deepEqual(parseCommand('+90m'), { kind: 'arm', raw: '+90m' });
-    assert.deepEqual(parseCommand('随便写的'), { kind: 'arm', raw: '随便写的' });
   });
 });
 
@@ -408,16 +390,52 @@ async function mount(overrides = {}) {
   return { host, agent, config };
 }
 
-/** Run one `/nightwatch <arg>` through the registered command. */
-async function runCommand(host, agent, rawInput) {
-  const definition = host.commands.get('nightwatch');
-  assert.ok(definition, 'the command should be registered');
-  return definition.handler({ agent, rawInput, attachments: [] });
+/** Same-origin headers: the button always speaks from the page's own origin. */
+const SAME_ORIGIN = {
+  host: '127.0.0.1:1',
+  'sec-fetch-site': 'same-origin',
+  origin: 'http://127.0.0.1:1',
+};
+
+/** Arm (or re-arm) one session through the button route — the shipped interface. */
+async function arm(host, agent, until) {
+  return host.request({
+    method: 'POST',
+    path: '/nightwatch/arm',
+    headers: SAME_ORIGIN,
+    body: { sessionId: agent.session.id, until },
+  });
+}
+
+/** Stop one session through the button route. */
+async function stopWatch(host, agent) {
+  return host.request({
+    method: 'POST',
+    path: '/nightwatch/stop',
+    headers: SAME_ORIGIN,
+    body: { sessionId: agent.session.id },
+  });
+}
+
+/** Read the snapshot the pill renders. */
+async function snapshotOf(host, agent) {
+  return host.request({
+    path: `/nightwatch/state?sessionId=${agent.session.id}`,
+    headers: SAME_ORIGIN,
+  });
 }
 
 describe('plugin integration', () => {
-  it('registers the command and its legacy alias', async () => {
+  it('ships without a slash command', async () => {
+    // The button is the interface. A command doing the same job gives one
+    // person two ways to do one thing, so it is opt-in for headless installs.
     const { host } = await mount();
+    assert.deepEqual([...host.commands.keys()], []);
+    host.dispose();
+  });
+
+  it('registers the command and its legacy alias when asked to', async () => {
+    const { host } = await mount({ enableCommand: true });
     assert.deepEqual([...host.commands.keys()], ['nightwatch', 'run-until']);
     const definition = host.commands.get('nightwatch');
     assert.match(definition.name, /^[a-z][a-z0-9_-]*$/u);
@@ -428,17 +446,18 @@ describe('plugin integration', () => {
 
   it('reports its state before anything is armed', async () => {
     const { host, agent } = await mount();
-    const result = await runCommand(host, agent, '');
-    assert.equal(result.kind, 'success');
-    assert.match(result.text, /未开启/u);
+    const state = await snapshotOf(host, agent);
+    assert.equal(state.status, 200);
+    assert.equal(state.json.value.armed, false);
     host.dispose();
   });
 
   it('refuses a deadline it cannot read, and stays disarmed', async () => {
     const { host, agent } = await mount();
-    const result = await runCommand(host, agent, '瞎写的');
-    assert.equal(result.kind, 'error');
-    assert.match(result.text, /看不懂/u);
+    const result = await arm(host, agent, '瞎写的');
+    assert.equal(result.status, 400);
+    assert.equal(result.json.ok, false);
+    assert.match(result.json.text, /看不懂/u);
     assert.equal(agent.received.length, 0);
     // Still disarmed: nothing should ever be sent.
     agent.startTurn();
@@ -450,8 +469,9 @@ describe('plugin integration', () => {
 
   it('continues the session on every turn/end until the deadline passes', async () => {
     const { host, agent } = await mount({ wrapUpMinutes: 0 });
-    const armed = await runCommand(host, agent, '+400ms');
-    assert.equal(armed.kind, 'success');
+    const armed = await arm(host, agent, '+400ms');
+    assert.equal(armed.status, 200);
+    assert.equal(armed.json.ok, true);
 
     agent.startTurn();
     agent.endTurn(host);
@@ -479,7 +499,7 @@ describe('plugin integration', () => {
 
   it('switches to the wrap-up text near the deadline', async () => {
     const { host, agent } = await mount({ wrapUpMinutes: 240 });
-    await runCommand(host, agent, '+600ms');
+    await arm(host, agent, '+600ms');
     agent.startTurn();
     agent.endTurn(host);
     await until(() => agent.received.length === 1, { label: 'wrap-up continuation' });
@@ -487,12 +507,13 @@ describe('plugin integration', () => {
     host.dispose();
   });
 
-  it('stops immediately on the stop word', async () => {
+  it('stops immediately when the button says stop', async () => {
     const { host, agent } = await mount();
-    await runCommand(host, agent, '+10m');
-    const stopped = await runCommand(host, agent, 'stop');
-    assert.equal(stopped.kind, 'success');
-    assert.match(stopped.text, /已续跑 0 轮/u);
+    await arm(host, agent, '+10m');
+    const stopped = await stopWatch(host, agent);
+    assert.equal(stopped.status, 200);
+    assert.equal(stopped.json.ok, true);
+    assert.match(stopped.json.text, /已续跑 0 轮/u);
     agent.startTurn();
     agent.endTurn(host);
     await new Promise((r) => setTimeout(r, 60));
@@ -502,7 +523,7 @@ describe('plugin integration', () => {
 
   it('enforces the round cap', async () => {
     const { host, agent } = await mount({ maxRounds: 2 });
-    await runCommand(host, agent, '+10m');
+    await arm(host, agent, '+10m');
     for (let i = 0; i < 2; i += 1) {
       agent.startTurn();
       agent.endTurn(host);
@@ -517,7 +538,7 @@ describe('plugin integration', () => {
 
   it('stops after a run of consecutive errors', async () => {
     const { host, agent } = await mount({ maxConsecutiveErrors: 2 });
-    await runCommand(host, agent, '+10m');
+    await arm(host, agent, '+10m');
     for (let i = 0; i < 2; i += 1) {
       agent.startTurn();
       agent.endTurn(host, 'error');
@@ -534,7 +555,7 @@ describe('plugin integration', () => {
 
   it('stops on a manual abort without fighting the person', async () => {
     const { host, agent } = await mount();
-    await runCommand(host, agent, '+10m');
+    await arm(host, agent, '+10m');
     agent.startTurn();
     agent.endTurn(host, 'aborted');
     await new Promise((r) => setTimeout(r, 60));
@@ -544,7 +565,7 @@ describe('plugin integration', () => {
 
   it('stops after a streak of rounds that touched no tool', async () => {
     const { host, agent } = await mount({ maxIdleRounds: 2 });
-    await runCommand(host, agent, '+10m');
+    await arm(host, agent, '+10m');
     // Two completed rounds, neither of which called a tool.
     for (let i = 0; i < 3; i += 1) {
       agent.startTurn();
@@ -558,7 +579,7 @@ describe('plugin integration', () => {
 
   it('a round that called a tool resets the idle streak', async () => {
     const { host, agent } = await mount({ maxIdleRounds: 2 });
-    await runCommand(host, agent, '+10m');
+    await arm(host, agent, '+10m');
     for (let i = 0; i < 4; i += 1) {
       agent.startTurn();
       // The turn did real work, so it must not count toward the idle streak.
@@ -572,7 +593,7 @@ describe('plugin integration', () => {
 
   it('leaves a truncated turn to the truncation plugin but still recovers', async () => {
     const { host, agent } = await mount({ heartbeatMs: 2_000 });
-    await runCommand(host, agent, '+10m');
+    await arm(host, agent, '+10m');
     agent.startTurn();
     agent.endTurn(host, 'max-tokens');
     await new Promise((r) => setTimeout(r, 60));
@@ -585,7 +606,7 @@ describe('plugin integration', () => {
 
   it('does not double-send when turn/end and idle both fire', async () => {
     const { host, agent } = await mount();
-    await runCommand(host, agent, '+10m');
+    await arm(host, agent, '+10m');
     // `endTurn` emits both events in the real order.
     agent.startTurn();
     agent.endTurn(host);
@@ -597,7 +618,7 @@ describe('plugin integration', () => {
 
   it('waits for a busy agent instead of appending mid-turn', async () => {
     const { host, agent } = await mount();
-    await runCommand(host, agent, '+10m');
+    await arm(host, agent, '+10m');
     agent.startTurn();
     // A turn/end while the agent is somehow still running: the follow-up has to
     // wait for idle rather than trip the reentrant-append guard.
@@ -611,7 +632,7 @@ describe('plugin integration', () => {
 
   it('persists the arming so a restart keeps watching', async () => {
     const { host, agent } = await mount();
-    await runCommand(host, agent, '+30m');
+    await arm(host, agent, '+30m');
     const raw = JSON.parse(readFileSync(join(sandbox, 'nightwatch.json'), 'utf8'));
     assert.equal(raw.version, 1);
     assert.ok(raw.armings[agent.session.id].deadline > Date.now());
@@ -653,7 +674,7 @@ describe('plugin integration', () => {
 
   it('drops the arming when the session is disposed', async () => {
     const { host, agent } = await mount();
-    await runCommand(host, agent, '+30m');
+    await arm(host, agent, '+30m');
     host.emit('session/disposed', agent.session);
     await new Promise((r) => setTimeout(r, 20));
     const raw = JSON.parse(readFileSync(join(sandbox, 'nightwatch.json'), 'utf8'));
@@ -695,7 +716,7 @@ describe('persistence edges', () => {
     const host = new FakeHost();
     const agent = host.addAgent('session-live');
     plugin.apply(host, readSettings({ heartbeatMs: 2_000, armKickDelayMs: 0, minIntervalMs: 0 }));
-    await runCommand(host, agent, '+90m');
+    await arm(host, agent, '+90m');
     await new Promise((r) => setTimeout(r, 30));
 
     const raw = JSON.parse(readFileSync(join(sandbox, 'nightwatch.json'), 'utf8'));
