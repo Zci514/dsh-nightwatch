@@ -1,6 +1,6 @@
 {
-  "name": "@local/dsh-run-until",
-  "version": "1.1.0",
+  "name": "dsh-nightwatch",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "守夜：给 DeepSeek Harness 的输入框加一颗按钮，选个钟点，会话一直续跑到那时自动停",
@@ -8,16 +8,17 @@
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
+    "nightwatch",
     "automation",
     "scheduler"
   ],
-  "homepage": "https://github.com/Zci514/dsh-run-until#readme",
+  "homepage": "https://github.com/Zci514/dsh-nightwatch#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Zci514/dsh-run-until.git"
+    "url": "git+https://github.com/Zci514/dsh-nightwatch.git"
   },
   "bugs": {
-    "url": "https://github.com/Zci514/dsh-run-until/issues"
+    "url": "https://github.com/Zci514/dsh-nightwatch/issues"
   },
   "author": "Zci514",
   "license": "MIT",
@@ -32,6 +33,7 @@
     "client.js",
     "cordis.patch.yml",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {

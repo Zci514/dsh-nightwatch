@@ -1,5 +1,5 @@
 /**
- * A miniature stand-in for the parts of the DSH host that `run-until` touches.
+ * A miniature stand-in for the parts of the DSH host that `nightwatch` touches.
  *
  * The point is to run the real plugin file — its real `apply()`, its real event
  * wiring, its real timers — against a fake host that is *fast* (millisecond
@@ -83,7 +83,7 @@ export class FakeAgent {
 /**
  * A fake cordis context.
  *
- * Implements only the surface `run-until` uses. `inject` runs its callback
+ * Implements only the surface `nightwatch` uses. `inject` runs its callback
  * immediately with the same object, which mirrors the real behaviour closely
  * enough for a plugin whose injected service is always present.
  */
@@ -110,7 +110,74 @@ export class FakeHost {
           return () => this.commands.delete(definition.name);
         },
       },
+      webServer: {
+        register: (route) => {
+          // Duplicate (kind, path) throws in the real webserver; mirroring that
+          // here is what keeps a second registration from passing silently.
+          const key = `${route.kind}:${route.path}`;
+          if (this.routes.has(key)) throw new Error(`webserver: duplicate ${route.kind} route "${route.path}"`);
+          this.routes.set(key, route);
+          return () => this.routes.delete(key);
+        },
+      },
     };
+    /** Registered HTTP routes, keyed by `kind:path`. */
+    this.routes = new Map();
+  }
+
+  /** The route whose prefix owns `pathname`, longest prefix first. */
+  routeFor(pathname) {
+    let best;
+    for (const route of this.routes.values()) {
+      if (route.kind === 'exact') {
+        if (route.path === pathname) return route;
+        continue;
+      }
+      if (pathname !== route.path && !pathname.startsWith(`${route.path}/`)) continue;
+      if (best === undefined || route.path.length > best.path.length) best = route;
+    }
+    return best;
+  }
+
+  /**
+   * Drive one request through the mounted routes and return the recorded reply.
+   *
+   * @param options.method - HTTP method.
+   * @param options.path - full path including the query string.
+   * @param options.headers - request headers (lower-case keys).
+   * @param options.body - JSON body, serialized as the request stream.
+   * @returns `{ status, headers, json }` — `json` is parsed when it parses.
+   */
+  async request({ method = 'GET', path, headers = {}, body = undefined }) {
+    const route = this.routeFor(path.split('?')[0]);
+    if (route === undefined) throw new Error(`no route for ${path}`);
+    const payload = body === undefined ? '' : JSON.stringify(body);
+    const req = {
+      method,
+      url: path,
+      headers,
+      async *[Symbol.asyncIterator]() {
+        if (payload !== '') yield Buffer.from(payload);
+      },
+    };
+    const record = { status: 200, headers: {}, body: '' };
+    const res = {
+      writeHead(status, outgoing) {
+        record.status = status;
+        record.headers = outgoing ?? {};
+      },
+      end(chunk) {
+        record.body = String(chunk ?? '');
+      },
+    };
+    await route.handler(req, res);
+    let json;
+    try {
+      json = JSON.parse(record.body);
+    } catch {
+      json = undefined;
+    }
+    return { ...record, json };
   }
 
   /** Add one agent and return it. */

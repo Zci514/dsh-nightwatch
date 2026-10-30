@@ -1,17 +1,17 @@
 /**
- * dsh-run-until — Client half.
+ * dsh-nightwatch — Client half.
  *
  * 一颗放进输入框工具条的按钮：点开选/填一个钟点，会话就一直替你说「继续」到那个
  * 时刻；到点自己停。按钮本身显示还剩多久，点一下能立刻停。
  *
  * 没有 `dsh.client` 之外的新机制：注册一个 `conversation.input.left` 槽位，宿主侧
- * 通过 `/run-until/{state,arm,stop}` 三个本地路由读写守夜记录 —— 走 HTTP 而不是
- * 走 `/run-until` slash 命令，是因为发命令会在对话里留下一条命令流水，而按钮点十
- * 次就该只在界面上变十次。
+ * 通过 `/nightwatch/{state,arm,stop}` 三个本地路由读写守夜记录 —— 走 HTTP 而不是
+ * 走 slash 命令，是因为发命令会在对话里留下一条命令流水，而按钮点十次就该只在
+ * 界面上变十次。
  */
 
 window.__ModuleLoader__.load({
-  id: '@local/dsh-run-until',
+  id: 'dsh-nightwatch',
   factory(require) {
     const React = require('react');
     let ReactDOM = null;
@@ -23,7 +23,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement;
     const { useCallback, useEffect, useMemo, useRef, useState } = React;
 
-    const NS = 'run-until';
+    const NS = 'nightwatch';
 
     const zh = {
       btn: '守夜',
@@ -51,6 +51,11 @@ window.__ModuleLoader__.load({
       cap: '上限 {n} 轮',
       stopping: '快到点了，正在收尾',
       closeHint: '点空白处关闭',
+      noHost: '宿主未挂载',
+      noHostTip: '按钮的后端没接上（宿主侧的 lib/ 改动要重启 DSH 才生效）。',
+      noSession: '会话未加载',
+      noSessionTip: '这个会话还没被 DSH 加载出来，先在里面说一句话再试。',
+      retry: '重试',
     };
 
     const en = {
@@ -79,6 +84,11 @@ window.__ModuleLoader__.load({
       cap: 'cap {n} rounds',
       stopping: 'Wrapping up',
       closeHint: 'Click outside to close',
+      noHost: 'Host not mounted',
+      noHostTip: 'The host half of this button is not answering — restart DSH after changing lib/.',
+      noSession: 'Session not loaded',
+      noSessionTip: 'This session is not loaded yet; say something in it first.',
+      retry: 'Retry',
     };
 
     /** `2h15m` / `45m` / `30s` — compact enough for a 26px pill. */
@@ -104,80 +114,82 @@ window.__ModuleLoader__.load({
     ];
 
     const CSS = `
-      .dsh-ru-wrap { position: relative; display: inline-flex; }
-      .dsh-ru-btn { height: 26px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px;
+      .dsh-nw-wrap { position: relative; display: inline-flex; }
+      .dsh-nw-btn { height: 26px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px;
         border-radius: 6px; border: 1px solid var(--dsw-alias-border-l1);
         background: transparent; color: var(--dsw-alias-label-primary);
         font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .2px;
         cursor: pointer; white-space: nowrap; transition: background 120ms ease, border-color 120ms ease; }
-      .dsh-ru-btn:hover { background: rgba(255,255,255,0.07); }
-      .dsh-ru-btn.is-armed { border-color: var(--dsw-alias-state-success-primary, #2f7d4f);
+      .dsh-nw-btn:hover { background: rgba(255,255,255,0.07); }
+      .dsh-nw-btn.is-armed { border-color: var(--dsw-alias-state-success-primary, #2f7d4f);
         background: rgba(47,125,79,0.12); }
-      .dsh-ru-btn.is-stopping { border-color: var(--dsw-alias-state-warn-primary, #b7791f);
+      .dsh-nw-btn.is-stopping { border-color: var(--dsw-alias-state-warn-primary, #b7791f);
         background: rgba(183,121,31,0.14); }
-      .dsh-ru-dot { width: 6px; height: 6px; border-radius: 50%; flex: none;
+      .dsh-nw-btn.is-dead { opacity: .55; }
+      .dsh-nw-btn.is-dead:hover { background: transparent; }
+      .dsh-nw-dot { width: 6px; height: 6px; border-radius: 50%; flex: none;
         background: currentColor; opacity: .55; }
-      .dsh-ru-btn.is-armed .dsh-ru-dot { opacity: 1;
-        box-shadow: 0 0 0 0 rgba(47,125,79,.55); animation: dsh-ru-pulse 2s infinite; }
-      @keyframes dsh-ru-pulse { 0%{box-shadow:0 0 0 0 rgba(47,125,79,.45)}
+      .dsh-nw-btn.is-armed .dsh-nw-dot { opacity: 1;
+        box-shadow: 0 0 0 0 rgba(47,125,79,.55); animation: dsh-nw-pulse 2s infinite; }
+      @keyframes dsh-nw-pulse { 0%{box-shadow:0 0 0 0 rgba(47,125,79,.45)}
         70%{box-shadow:0 0 0 5px rgba(47,125,79,0)} 100%{box-shadow:0 0 0 0 rgba(47,125,79,0)} }
-      .dsh-ru-glyph { font-size: 13px; line-height: 1; opacity: .8; }
-      .dsh-ru-mask { position: fixed; inset: 0; z-index: 60; }
-      .dsh-ru-card { position: fixed; z-index: 61; width: 300px; box-sizing: border-box;
+      .dsh-nw-glyph { font-size: 13px; line-height: 1; opacity: .8; }
+      .dsh-nw-mask { position: fixed; inset: 0; z-index: 60; }
+      .dsh-nw-card { position: fixed; z-index: 61; width: 320px; box-sizing: border-box;
         padding: 14px; border-radius: 12px;
         border: 1px solid var(--dsw-alias-border-l1);
         background: var(--dsw-alias-bg-overlay, #1b1d21);
         box-shadow: 0 12px 34px rgba(0,0,0,.42);
         color: var(--dsw-alias-label-primary); }
-      .dsh-ru-h { font-size: 13.5px; font-weight: 700; margin: 0 0 6px; }
-      .dsh-ru-sub { margin: 0 0 10px; font-size: 11.5px; line-height: 1.55;
+      .dsh-nw-h { font-size: 13.5px; font-weight: 700; margin: 0 0 6px; }
+      .dsh-nw-sub { margin: 0 0 10px; font-size: 11.5px; line-height: 1.55;
         color: var(--dsw-alias-label-secondary); }
-      .dsh-ru-status { margin: 0 0 10px; padding: 7px 9px; border-radius: 8px;
+      .dsh-nw-status { margin: 0 0 10px; padding: 7px 9px; border-radius: 8px;
         font-size: 11.5px; line-height: 1.5;
         border: 1px solid var(--dsw-alias-border-l1); background: rgba(255,255,255,0.03); }
-      .dsh-ru-status.is-armed { border-color: var(--dsw-alias-state-success-primary, #2f7d4f); }
-      .dsh-ru-label { font-size: 11px; font-weight: 600; opacity: .6; margin: 0 0 5px; }
-      .dsh-ru-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 11px; }
-      .dsh-ru-chip { height: 27px; padding: 0 9px; border-radius: 7px; font: inherit;
+      .dsh-nw-status.is-armed { border-color: var(--dsw-alias-state-success-primary, #2f7d4f); }
+      .dsh-nw-label { font-size: 11px; font-weight: 600; opacity: .6; margin: 0 0 5px; }
+      .dsh-nw-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 11px; }
+      .dsh-nw-chip { height: 27px; padding: 0 9px; border-radius: 7px; font: inherit;
         font-size: 11.5px; cursor: pointer; color: inherit;
         border: 1px solid var(--dsw-alias-border-l1); background: transparent;
         transition: background 120ms ease; }
-      .dsh-ru-chip:hover { background: rgba(255,255,255,0.07); }
-      .dsh-ru-chip:disabled { opacity: .4; cursor: default; }
-      .dsh-ru-input { width: 100%; box-sizing: border-box; height: 33px; padding: 0 10px;
+      .dsh-nw-chip:hover { background: rgba(255,255,255,0.07); }
+      .dsh-nw-chip:disabled { opacity: .4; cursor: default; }
+      .dsh-nw-input { width: 100%; box-sizing: border-box; height: 33px; padding: 0 10px;
         border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1);
         background: rgba(255,255,255,0.03); color: inherit; font: inherit; font-size: 12.5px;
         outline: none; transition: border-color 120ms ease; }
-      .dsh-ru-input:focus { border-color: var(--dsw-alias-state-success-primary, #2f7d4f); }
-      .dsh-ru-input::placeholder { opacity: .4; }
-      .dsh-ru-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
-      .dsh-ru-act { height: 32px; padding: 0 14px; border-radius: 8px; font: inherit;
+      .dsh-nw-input:focus { border-color: var(--dsw-alias-state-success-primary, #2f7d4f); }
+      .dsh-nw-input::placeholder { opacity: .4; }
+      .dsh-nw-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+      .dsh-nw-act { height: 32px; padding: 0 14px; border-radius: 8px; font: inherit;
         font-size: 12.5px; cursor: pointer; transition: opacity 120ms ease; }
-      .dsh-ru-act:active { transform: scale(.985); }
-      .dsh-ru-cancel { border: 1px solid var(--dsw-alias-border-l1); background: transparent;
+      .dsh-nw-act:active { transform: scale(.985); }
+      .dsh-nw-cancel { border: 1px solid var(--dsw-alias-border-l1); background: transparent;
         color: var(--dsw-alias-label-primary); }
-      .dsh-ru-cancel:hover { background: rgba(255,255,255,0.06); }
-      .dsh-ru-go { border: none; font-weight: 600; color: #fff;
+      .dsh-nw-cancel:hover { background: rgba(255,255,255,0.06); }
+      .dsh-nw-go { border: none; font-weight: 600; color: #fff;
         background: var(--dsw-alias-state-success-primary, #2f7d4f); }
-      .dsh-ru-go:hover { opacity: .9; }
-      .dsh-ru-go:disabled { opacity: .5; cursor: default; }
-      .dsh-ru-stop { border: 1px solid var(--dsw-alias-state-error-primary, #c53030);
+      .dsh-nw-go:hover { opacity: .9; }
+      .dsh-nw-go:disabled { opacity: .5; cursor: default; }
+      .dsh-nw-stop { border: 1px solid var(--dsw-alias-state-error-primary, #c53030);
         background: transparent; color: var(--dsw-alias-state-error-primary, #c53030); }
-      .dsh-ru-stop:hover { background: rgba(197,48,48,0.12); }
-      .dsh-ru-err { font-size: 11.5px; margin-top: 8px;
+      .dsh-nw-stop:hover { background: rgba(197,48,48,0.12); }
+      .dsh-nw-err { font-size: 11.5px; margin-top: 8px;
         color: var(--dsw-alias-state-error-primary, #c53030); }
-      .dsh-ru-hint { font-size: 10.5px; opacity: .4; margin-top: 7px; }
+      .dsh-nw-hint { font-size: 10.5px; opacity: .4; margin-top: 7px; }
     `;
 
     const BtnGlyph = () =>
       h(
         'span',
-        { className: 'dsh-ru-glyph', key: 'g' },
+        { className: 'dsh-nw-glyph', key: 'g' },
         '\u263D', // crescent moon
       );
 
     function makeButton(ctx) {
-      return function RunUntilButton(props) {
+      return function NightwatchButton(props) {
         const t = props.t;
         const sessionId = props.sessionId;
         const [snapshot, setSnapshot] = useState(null);
@@ -185,6 +197,10 @@ window.__ModuleLoader__.load({
         const [text, setText] = useState('');
         const [busy, setBusy] = useState(false);
         const [error, setError] = useState(null);
+        /** `'host'` = routes missing, `'session'` = this session is not loaded. */
+        const [unavailable, setUnavailable] = useState(null);
+        /** Re-render tick for the local countdown. */
+        const [, setTick] = useState(0);
         const anchorRef = useRef(null);
         /** Measured card, so placement uses the real height instead of a guess. */
         const cardRef = useRef(null);
@@ -200,32 +216,64 @@ window.__ModuleLoader__.load({
           if (typeof sessionId !== 'string' || sessionId === '') return;
           try {
             const res = await fetch(
-              '/run-until/state?sessionId=' + encodeURIComponent(sessionId),
+              '/nightwatch/state?sessionId=' + encodeURIComponent(sessionId),
               { cache: 'no-store' },
             );
+            if (res.status === 404) {
+              // 404 is the only way a missing route and an unloaded session both
+              // present themselves, so read the error the host chose to send.
+              let body = null;
+              try {
+                body = await res.json();
+              } catch {
+                body = null;
+              }
+              setUnavailable(
+                body !== null && body.error === 'unknown-session' ? 'session' : 'host',
+              );
+              return;
+            }
             if (!res.ok) return;
             const body = await res.json();
-            if (body && body.ok === true) setSnapshot(body.value);
+            if (body && body.ok === true) {
+              setSnapshot(body.value);
+              setUnavailable(null);
+            }
           } catch {
             // A dropped poll is not worth surfacing; the next one will land.
           }
         }, [sessionId]);
 
-        // Poll faster while armed: the pill shows a live countdown, and a stale
-        // minute on screen reads as a broken plugin.
+        // Poll for calibration, not for the countdown: the pill counts down
+        // locally once a second, so a 15s/30s poll is enough to notice an arming
+        // from another tab and costs 1/15th of the requests it used to.
         useEffect(() => {
           let cancelled = false;
           pull();
           const armed = snapshot?.armed === true;
-          const period = armed ? 5_000 : 20_000;
+          const period = armed ? 15_000 : 30_000;
           const timer = setInterval(() => {
-            if (!cancelled) pull();
+            // A hidden tab has no viewer; do not poll for nobody.
+            if (!cancelled && document.visibilityState !== 'hidden') pull();
           }, period);
+          const onVisible = () => {
+            if (document.visibilityState === 'visible') pull();
+          };
+          document.addEventListener('visibilitychange', onVisible);
           return () => {
             cancelled = true;
             clearInterval(timer);
+            document.removeEventListener('visibilitychange', onVisible);
           };
         }, [pull, snapshot?.armed]);
+
+        // The visible countdown. Without this the pill sits on whatever was
+        // true at the last poll, which reads as a frozen/broken timer.
+        useEffect(() => {
+          if (snapshot?.armed !== true) return undefined;
+          const timer = setInterval(() => setTick((n) => n + 1), 1_000);
+          return () => clearInterval(timer);
+        }, [snapshot?.armed, snapshot?.deadline]);
 
         const place = useCallback(() => {
           const el = anchorRef.current;
@@ -281,7 +329,7 @@ window.__ModuleLoader__.load({
           setBusy(true);
           setError(null);
           try {
-            const res = await fetch('/run-until/arm', {
+            const res = await fetch('/nightwatch/arm', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ sessionId, until }),
@@ -301,7 +349,7 @@ window.__ModuleLoader__.load({
           setBusy(true);
           setError(null);
           try {
-            const res = await fetch('/run-until/stop', {
+            const res = await fetch('/nightwatch/stop', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ sessionId }),
@@ -318,47 +366,68 @@ window.__ModuleLoader__.load({
         };
 
         const armed = snapshot?.armed === true;
-        const left = armed ? shortLeft(snapshot.remainingMs) : '';
-        const stoppingSoon = armed && snapshot.stoppingSoon === true;
+        // Counted down locally between calibrations, so the pill is never frozen.
+        const remainingMs = armed
+          ? Math.max(0, snapshot.deadline - Date.now())
+          : 0;
+        const left = armed ? shortLeft(remainingMs) : '';
+        const stoppingSoon =
+          armed &&
+          (snapshot.stoppingSoon === true ||
+            remainingMs <= (snapshot.wrapUpMinutes ?? 10) * 60_000);
         const rounds = snapshot?.rounds ?? 0;
         const cap = snapshot?.roundsCap ?? 0;
+        const dead = unavailable !== null;
 
         const trigger = h(
           'button',
           {
             type: 'button',
             ref: anchorRef,
-            className: 'dsh-ru-btn' + (armed ? (stoppingSoon ? ' is-stopping' : ' is-armed') : ''),
+            className:
+              'dsh-nw-btn' +
+              (armed ? (stoppingSoon ? ' is-stopping' : ' is-armed') : '') +
+              (dead ? ' is-dead' : ''),
             onClick: openCard,
-            title: armed ? t('armed', { left, rounds }) : t('title'),
+            title: dead
+              ? t(unavailable === 'session' ? 'noSessionTip' : 'noHostTip')
+              : armed
+                ? t('armed', { left, rounds })
+                : t('title'),
           },
-          h('span', { className: 'dsh-ru-dot', key: 'd' }),
+          h('span', { className: 'dsh-nw-dot', key: 'd' }),
           BtnGlyph(),
           h(
             'span',
             { key: 'l' },
-            armed ? t('btnArmed', { left }) : t('btn'),
+            dead
+              ? t(unavailable === 'session' ? 'noSession' : 'noHost')
+              : armed
+                ? t('btnArmed', { left })
+                : t('btn'),
           ),
         );
 
         const status = h(
           'div',
-          { className: 'dsh-ru-status' + (armed ? ' is-armed' : '') },
-          armed
-            ? t('armed', { left: left, rounds: String(rounds) })
-              + (cap > 0 ? ' · ' + t('cap', { n: String(cap) }) : '')
-              + (stoppingSoon ? ' · ' + t('stopping') : '')
-            : t('notArmed'),
+          { className: 'dsh-nw-status' + (armed ? ' is-armed' : '') },
+          dead
+            ? t(unavailable === 'session' ? 'noSessionTip' : 'noHostTip')
+            : armed
+              ? t('armed', { left: left, rounds: String(rounds) })
+                + (cap > 0 ? ' · ' + t('cap', { n: String(cap) }) : '')
+                + (stoppingSoon ? ' · ' + t('stopping') : '')
+              : t('notArmed'),
         );
 
         const card = open
           ? h(
               'div',
-              { className: 'dsh-ru-mask', onClick: () => setOpen(false) },
+              { className: 'dsh-nw-mask', onClick: () => setOpen(false) },
               h(
                 'div',
                 {
-                  className: 'dsh-ru-card',
+                  className: 'dsh-nw-card',
                   ref: cardRef,
                   // Hidden for the first frame: rendered so it can be measured,
                   // but not shown at a stale position.
@@ -367,55 +436,70 @@ window.__ModuleLoader__.load({
                     : { left: anchor.left, top: anchor.top },
                   onClick: (event) => event.stopPropagation(),
                 },
-                h('div', { className: 'dsh-ru-h' }, t('title')),
-                h('p', { className: 'dsh-ru-sub' }, t('body', { n: String(wrapMinutes) })),
+                h('div', { className: 'dsh-nw-h' }, t('title')),
+                h('p', { className: 'dsh-nw-sub' }, t('body', { n: String(wrapMinutes) })),
                 status,
+                dead
+                  ? h(
+                      'div',
+                      { className: 'dsh-nw-actions' },
+                      h(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'dsh-nw-act dsh-nw-cancel',
+                          onClick: () => pull(),
+                        },
+                        t('retry'),
+                      ),
+                    )
+                  : null,
 
-                h('div', { className: 'dsh-ru-label' }, t('quick')),
+                h('div', { className: 'dsh-nw-label' }, t('quick')),
                 h(
                   'div',
-                  { className: 'dsh-ru-quick' },
+                  { className: 'dsh-nw-quick' },
                   QUICK.map((item) =>
                     h(
                       'button',
                       {
                         key: item.value,
                         type: 'button',
-                        className: 'dsh-ru-chip',
-                        disabled: busy,
+                        className: 'dsh-nw-chip',
+                        disabled: busy || dead,
                         onClick: () => arm(item.value),
                       },
-                      props.lang === 'en' ? item.en : item.label,
                       t(item.key),
                     ),
                   ),
                 ),
 
-                h('div', { className: 'dsh-ru-label' }, t('custom')),
+                h('div', { className: 'dsh-nw-label' }, t('custom')),
                 h('input', {
-                  className: 'dsh-ru-input',
+                  className: 'dsh-nw-input',
                   type: 'text',
                   value: text,
                   placeholder: t('hint'),
+                  disabled: dead,
                   onChange: (event) => setText(event.target.value),
                   onKeyDown: (event) => {
-                    if (event.key === 'Enter' && !busy) arm(text);
+                    if (event.key === 'Enter' && !busy && !dead) arm(text);
                     else if (event.key === 'Escape') setOpen(false);
                   },
                 }),
 
-                error !== null ? h('div', { className: 'dsh-ru-err' }, t('fail') + error) : null,
+                error !== null ? h('div', { className: 'dsh-nw-err' }, t('fail') + error) : null,
 
                 h(
                   'div',
-                  { className: 'dsh-ru-actions' },
+                  { className: 'dsh-nw-actions' },
                   armed
                     ? h(
                         'button',
                         {
                           type: 'button',
-                          className: 'dsh-ru-act dsh-ru-stop',
-                          disabled: busy,
+                          className: 'dsh-nw-act dsh-nw-stop',
+                          disabled: busy || dead,
                           onClick: stop,
                         },
                         t('stop'),
@@ -423,21 +507,21 @@ window.__ModuleLoader__.load({
                     : null,
                   h(
                     'button',
-                    { type: 'button', className: 'dsh-ru-act dsh-ru-cancel', onClick: () => setOpen(false) },
+                    { type: 'button', className: 'dsh-nw-act dsh-nw-cancel', onClick: () => setOpen(false) },
                     t('cancel'),
                   ),
                   h(
                     'button',
                     {
                       type: 'button',
-                      className: 'dsh-ru-act dsh-ru-go',
-                      disabled: busy || text.trim() === '',
+                      className: 'dsh-nw-act dsh-nw-go',
+                      disabled: busy || dead || text.trim() === '',
                       onClick: () => arm(text),
                     },
                     busy ? t('busy') : armed ? t('update') : t('start'),
                   ),
                 ),
-                h('div', { className: 'dsh-ru-hint' }, t('closeHint')),
+                h('div', { className: 'dsh-nw-hint' }, t('closeHint')),
               ),
             )
           : null;
@@ -449,7 +533,7 @@ window.__ModuleLoader__.load({
 
         return h(
           'div',
-          { className: 'dsh-ru-wrap' },
+          { className: 'dsh-nw-wrap' },
           h('style', { key: 'css' }, CSS),
           trigger,
           portal,
@@ -458,13 +542,13 @@ window.__ModuleLoader__.load({
     }
 
     function apply(ctx) {
-      ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'run-until: dictionaries');
+      ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'nightwatch: dictionaries');
       const Button = makeButton(ctx);
       ctx.slots.inject('conversation.input.left', () =>
         ctx.slots.register(
           {
             name: 'conversation.input.left',
-            id: 'run-until',
+            id: 'nightwatch',
             order: 110,
             locale: NS,
             inject: (sessionId) => ({ sessionId }),

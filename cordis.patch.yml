@@ -1,10 +1,11 @@
-# 守夜（@local/dsh-run-until）
+# 守夜（dsh-nightwatch）
 #
 # 让一个会话一直续跑到指定钟点，到点自己停。
-# 挂载后：输入框左下角多一颗「☽ 守夜」按钮，另有一条 /run-until 指令。
+# 挂载后：输入框左下角多一颗「☽ 守夜」按钮，另有一条 /nightwatch 指令
+# （旧的 /run-until 仍然可用，只是改名前留下的名字）。
 - insert:
-    - id: run-until
-      name: '@local/dsh-run-until'
+    - id: nightwatch
+      name: 'dsh-nightwatch'
       config:
         # 默认值全部可以在这里改；数值越界会被 lib/policy.js 钳制。
         enabled: true

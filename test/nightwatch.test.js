@@ -1,5 +1,5 @@
 /**
- * Tests for `run-until`.
+ * Tests for `nightwatch`.
  *
  * Two layers: the pure policy (clock in, verdict out — no host, no timers), and
  * an integration layer that loads the real `lib/index.js` into a fake host and
@@ -16,7 +16,7 @@ import { after, before, describe, it } from 'node:test';
 
 // The state file path is resolved at module load, so DSH_HOME has to be set
 // before the plugin is imported.
-const sandbox = mkdtempSync(join(tmpdir(), 'run-until-'));
+const sandbox = mkdtempSync(join(tmpdir(), 'nightwatch-'));
 process.env.DSH_HOME = sandbox;
 
 const policy = await import('../lib/policy.js');
@@ -33,6 +33,8 @@ const {
   renderContinueText,
   remainingLabel,
   describeArming,
+  shouldForget,
+  parseHint,
 } = policy;
 
 after(() => rmSync(sandbox, { recursive: true, force: true }));
@@ -332,6 +334,28 @@ describe('decideHeartbeat', () => {
   });
 });
 
+describe('shouldForget', () => {
+  const TTL = 10 * 60_000;
+
+  it('drops a record that never held an arming right away', () => {
+    // `/nightwatch stop` on a quiet session still creates a record; keeping it
+    // would leave one entry per session the process ever saw.
+    const state = { deadline: 0, armedAt: 0, rounds: 0, pending: false };
+    assert.equal(shouldForget({ state, now: NOW, ttlMs: TTL }), true);
+  });
+
+  it('keeps an armed record and a send in flight', () => {
+    assert.equal(shouldForget({ state: { deadline: NOW + 1, armedAt: NOW, pending: false }, now: NOW, ttlMs: TTL }), false);
+    assert.equal(shouldForget({ state: { deadline: 0, armedAt: NOW, pending: true }, now: NOW, ttlMs: TTL }), false);
+  });
+
+  it('keeps a just-stopped record long enough to report its rounds', () => {
+    const state = { deadline: 0, armedAt: NOW - 60_000, goneAt: NOW - 1_000, rounds: 12, pending: false };
+    assert.equal(shouldForget({ state, now: NOW, ttlMs: TTL }), false);
+    assert.equal(shouldForget({ state, now: NOW + TTL, ttlMs: TTL }), true);
+  });
+});
+
 describe('rendering', () => {
   it('expands the placeholders in a continue template', () => {
     const text = renderContinueText('{now}|{deadline}|{left}', { now: NOW, deadline: NOW + 90 * 60_000 });
@@ -344,6 +368,15 @@ describe('rendering', () => {
     assert.equal(remainingLabel(0, 120 * 60_000), '2 小时');
     assert.equal(remainingLabel(0, 42_000), '1 分');
     assert.equal(remainingLabel(0, 0), '0 分');
+  });
+
+  it('renders the usage hint against the day it is shown, not a frozen date', () => {
+    // A hint pinned to one date turns into a wrong example the next morning.
+    const hint = parseHint(NOW);
+    assert.match(hint, /22:30/u);
+    assert.match(hint, /\+90m/u);
+    assert.match(hint, /0710|10-29/u);
+    assert.ok(hint.includes('2026-10-29'), 'the current date is rendered live');
   });
 
   it('describes an empty and an armed session differently', () => {
@@ -375,18 +408,18 @@ async function mount(overrides = {}) {
   return { host, agent, config };
 }
 
-/** Run one `/run-until <arg>` through the registered command. */
+/** Run one `/nightwatch <arg>` through the registered command. */
 async function runCommand(host, agent, rawInput) {
-  const definition = [...host.commands.values()][0];
+  const definition = host.commands.get('nightwatch');
   assert.ok(definition, 'the command should be registered');
   return definition.handler({ agent, rawInput, attachments: [] });
 }
 
 describe('plugin integration', () => {
-  it('registers exactly one slash command with a valid name', async () => {
+  it('registers the command and its legacy alias', async () => {
     const { host } = await mount();
-    assert.deepEqual([...host.commands.keys()], ['run-until']);
-    const definition = host.commands.get('run-until');
+    assert.deepEqual([...host.commands.keys()], ['nightwatch', 'run-until']);
+    const definition = host.commands.get('nightwatch');
     assert.match(definition.name, /^[a-z][a-z0-9_-]*$/u);
     assert.ok(definition.description.length > 0);
     assert.equal(typeof definition.handler, 'function');
@@ -579,7 +612,7 @@ describe('plugin integration', () => {
   it('persists the arming so a restart keeps watching', async () => {
     const { host, agent } = await mount();
     await runCommand(host, agent, '+30m');
-    const raw = JSON.parse(readFileSync(join(sandbox, 'run-until.json'), 'utf8'));
+    const raw = JSON.parse(readFileSync(join(sandbox, 'nightwatch.json'), 'utf8'));
     assert.equal(raw.version, 1);
     assert.ok(raw.armings[agent.session.id].deadline > Date.now());
     host.dispose();
@@ -592,7 +625,7 @@ describe('plugin integration', () => {
     const sessionId = 'session-restart';
     const deadline = Date.now() + 30 * 60_000;
     writeFileSync(
-      join(sandbox, 'run-until.json'),
+      join(sandbox, 'nightwatch.json'),
       `${JSON.stringify(
         { version: 1, armings: { [sessionId]: { deadline, armedAt: Date.now(), rounds: 0 } } },
         null,
@@ -615,7 +648,7 @@ describe('plugin integration', () => {
     assert.equal(agent.received[0].source.kind, 'cordis-host-runner');
     assert.match(agent.received[0].content[0].text, /距离/u);
     host.dispose();
-    writeFileSync(join(sandbox, 'run-until.json'), '{"version":1,"armings":{}}\n', 'utf8');
+    writeFileSync(join(sandbox, 'nightwatch.json'), '{"version":1,"armings":{}}\n', 'utf8');
   });
 
   it('drops the arming when the session is disposed', async () => {
@@ -623,7 +656,7 @@ describe('plugin integration', () => {
     await runCommand(host, agent, '+30m');
     host.emit('session/disposed', agent.session);
     await new Promise((r) => setTimeout(r, 20));
-    const raw = JSON.parse(readFileSync(join(sandbox, 'run-until.json'), 'utf8'));
+    const raw = JSON.parse(readFileSync(join(sandbox, 'nightwatch.json'), 'utf8'));
     assert.equal(raw.armings[agent.session.id], undefined);
     host.dispose();
   });
@@ -645,7 +678,7 @@ describe('persistence edges', () => {
     // otherwise a restart would quietly lose it.
     const crashDeadline = Date.now() + 45 * 60_000;
     writeFileSync(
-      join(sandbox, 'run-until.json'),
+      join(sandbox, 'nightwatch.json'),
       `${JSON.stringify(
         {
           version: 1,
@@ -665,7 +698,7 @@ describe('persistence edges', () => {
     await runCommand(host, agent, '+90m');
     await new Promise((r) => setTimeout(r, 30));
 
-    const raw = JSON.parse(readFileSync(join(sandbox, 'run-until.json'), 'utf8'));
+    const raw = JSON.parse(readFileSync(join(sandbox, 'nightwatch.json'), 'utf8'));
     assert.ok(raw.armings['session-crash'], 'the unloaded arming is still persisted');
     assert.equal(raw.armings['session-crash'].deadline, crashDeadline);
     assert.equal(raw.armings['session-crash'].rounds, 3);
@@ -675,7 +708,7 @@ describe('persistence edges', () => {
   it('forgets an arming that expired while nothing was watching', async () => {
     const staleDeadline = Date.now() - 60_000;
     writeFileSync(
-      join(sandbox, 'run-until.json'),
+      join(sandbox, 'nightwatch.json'),
       `${JSON.stringify(
         {
           version: 1,
@@ -693,8 +726,155 @@ describe('persistence edges', () => {
     await new Promise((r) => setTimeout(r, 2_300));
 
     assert.equal(agent.received.length, 0, 'an expired arming never resumes');
-    const raw = JSON.parse(readFileSync(join(sandbox, 'run-until.json'), 'utf8'));
+    const raw = JSON.parse(readFileSync(join(sandbox, 'nightwatch.json'), 'utf8'));
     assert.equal(raw.armings['session-stale'], undefined, 'the stale record is dropped');
+    host.dispose();
+  });
+
+  it('adopts armings left in the 1.1.0 state file exactly once', async () => {
+    // 1.1.0 wrote `run-until.json`. An upgrade must not lose a watch that is
+    // already running, and the fold-over must happen on the new file so the
+    // old one stops being consulted.
+    const sessionId = 'session-migrated';
+    const deadline = Date.now() + 30 * 60_000;
+    writeFileSync(
+      join(sandbox, 'run-until.json'),
+      `${JSON.stringify(
+        { version: 1, armings: { [sessionId]: { deadline, armedAt: Date.now(), rounds: 2 } } },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+
+    const host = new FakeHost();
+    const agent = host.addAgent(sessionId);
+    plugin.apply(
+      host,
+      readSettings({ heartbeatMs: 2_000, armKickDelayMs: 0, minIntervalMs: 0, wrapUpMinutes: 0 }),
+    );
+    await until(() => agent.received.length >= 1, {
+      label: 'migrated arming continues',
+      timeoutMs: 8_000,
+    });
+
+    const folded = JSON.parse(readFileSync(join(sandbox, 'nightwatch.json'), 'utf8'));
+    assert.ok(folded.armings[sessionId], 'the arming now lives in the new file');
+    const legacy = JSON.parse(readFileSync(join(sandbox, 'run-until.json'), 'utf8'));
+    assert.ok(legacy.armings[sessionId], 'the old file is left alone for a rollback');
+    host.dispose();
+    writeFileSync(join(sandbox, 'nightwatch.json'), '{"version":1,"armings":{}}\n', 'utf8');
+    writeFileSync(join(sandbox, 'run-until.json'), '{"version":1,"armings":{}}\n', 'utf8');
+  });
+});
+
+describe('button routes', () => {
+  const HOST = '127.0.0.1:13232';
+
+  it('serves the same three routes under both mount points', async () => {
+    // `/run-until` stays mounted because 1.1.0 documented it; the button speaks
+    // `/nightwatch`. One handler owns both so they cannot drift apart.
+    const { host, agent } = await mount();
+    for (const base of ['/nightwatch', '/run-until']) {
+      const state = await host.request({
+        path: `${base}/state?sessionId=${agent.session.id}`,
+        headers: { host: HOST, 'sec-fetch-site': 'same-origin' },
+      });
+      assert.equal(state.status, 200);
+      assert.equal(state.json.value.armed, false);
+    }
+    host.dispose();
+  });
+
+  it('arms and stops a session through the POST routes', async () => {
+    const { host, agent } = await mount();
+    const armed = await host.request({
+      method: 'POST',
+      path: '/nightwatch/arm',
+      headers: { host: HOST, 'sec-fetch-site': 'same-origin', origin: `http://${HOST}` },
+      body: { sessionId: agent.session.id, until: '+90m' },
+    });
+    assert.equal(armed.status, 200);
+    assert.match(armed.json.text, /守夜已开启/u);
+    const state = await host.request({
+      path: `/nightwatch/state?sessionId=${agent.session.id}`,
+      headers: { host: HOST },
+    });
+    assert.equal(state.json.value.armed, true);
+    assert.ok(state.json.value.remainingMs > 0);
+
+    const stopped = await host.request({
+      method: 'POST',
+      path: '/nightwatch/stop',
+      headers: { host: HOST, 'sec-fetch-site': 'same-origin', origin: `http://${HOST}` },
+      body: { sessionId: agent.session.id },
+    });
+    assert.equal(stopped.status, 200);
+    assert.match(stopped.json.text, /守夜已停/u);
+    host.dispose();
+  });
+
+  it('refuses a request another site told the browser to send', async () => {
+    // The harness mounts plugin routes without the Host/Origin gate it applies
+    // to its own `/api`, so a page the browser happens to have open could
+    // otherwise arm a watch for a session id it guessed.
+    const { host, agent } = await mount();
+    const crossSite = await host.request({
+      method: 'POST',
+      path: '/nightwatch/arm',
+      headers: {
+        host: HOST,
+        'sec-fetch-site': 'cross-site',
+        origin: 'https://evil.example',
+        'content-type': 'text/plain',
+      },
+      body: { sessionId: agent.session.id, until: '+90m' },
+    });
+    assert.equal(crossSite.status, 403);
+    assert.equal(crossSite.json.error, 'cross-origin');
+
+    const wrongOrigin = await host.request({
+      method: 'POST',
+      path: '/nightwatch/arm',
+      headers: { host: HOST, origin: 'https://evil.example' },
+      body: { sessionId: agent.session.id, until: '+90m' },
+    });
+    assert.equal(wrongOrigin.status, 403);
+
+    // Nothing was armed by either attempt.
+    const state = await host.request({
+      path: `/nightwatch/state?sessionId=${agent.session.id}`,
+      headers: { host: HOST },
+    });
+    assert.equal(state.json.value.armed, false);
+
+    // A client with no browser markers at all (curl, a test) is still served:
+    // this gate is about pages, not about authentication.
+    const curl = await host.request({
+      method: 'POST',
+      path: '/nightwatch/arm',
+      headers: { host: HOST },
+      body: { sessionId: agent.session.id, until: '+90m' },
+    });
+    assert.equal(curl.status, 200);
+    host.dispose();
+  });
+
+  it('rejects an unknown session instead of creating a record for it', async () => {
+    const { host } = await mount();
+    const state = await host.request({
+      path: '/nightwatch/state?sessionId=session-nobody',
+      headers: { host: HOST },
+    });
+    assert.equal(state.status, 404);
+    assert.equal(state.json.error, 'unknown-session');
+    const arm = await host.request({
+      method: 'POST',
+      path: '/nightwatch/arm',
+      headers: { host: HOST },
+      body: { sessionId: 'session-nobody', until: '+10m' },
+    });
+    assert.equal(arm.status, 404);
     host.dispose();
   });
 });
