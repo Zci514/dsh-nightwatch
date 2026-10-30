@@ -29,7 +29,10 @@ window.__ModuleLoader__.load({
       btn: '守夜',
       btnArmed: '守夜 · {left}',
       title: '守夜：一直干到几点',
-      body: '到点之前，每轮答完就自动接一句「继续」；到最后 {n} 分钟切成收尾语气。到点不再开新的一轮。',
+      bodyWrap: '到点之前，每轮答完就自动接一句「继续」；{when}切成收尾语气，到点不再开新的一轮。',
+      bodyNoWrap: '到点之前，每轮答完就自动接一句「继续」，到点不再开新的一轮。',
+      whenArmed: '最后 {len} 内',
+      whenUnarmed: '最后最多 {n} 分钟内，',
       quick: '快点选',
       'q.30m': '+30 分',
       'q.1h': '+1 小时',
@@ -62,7 +65,10 @@ window.__ModuleLoader__.load({
       btn: 'Night watch',
       btnArmed: 'Until {left}',
       title: 'Night watch: keep going until a clock time',
-      body: 'Until that time, each finished turn is followed by one automatic "continue"; the last {n} minutes switch to a wrap-up tone. No new turn is opened after the deadline.',
+      bodyWrap: 'Until that time, each finished turn is followed by one automatic "continue"; {when} the tone switches to wrap-up, and no new turn is opened after the deadline.',
+      bodyNoWrap: 'Until that time, each finished turn is followed by one automatic "continue"; no new turn is opened after the deadline.',
+      whenArmed: 'within the last {len}',
+      whenUnarmed: 'for up to the last {n} minutes,',
       quick: 'Quick picks',
       'q.30m': '+30 min',
       'q.1h': '+1 hour',
@@ -102,6 +108,30 @@ window.__ModuleLoader__.load({
       }
       if (totalMinutes >= 1) return totalMinutes + 'm';
       return Math.max(1, Math.ceil(ms / 1_000)) + 's';
+    }
+
+    /**
+     * The one-line explanation under the title.
+     *
+     * The wrap-up window is a *ceiling* the host shrinks to half the remaining
+     * time (a +3m watch wraps up for 90s, not 10 minutes). Promising the
+     * configured number here would describe behaviour that does not happen, so
+     * an armed watch quotes the window the host actually computed.
+     *
+     * @param t - the locale translate function.
+     * @param snapshot - the last known host snapshot, if any.
+     * @param armed - whether a watch is running.
+     * @returns the paragraph text.
+     */
+    function subline(t, snapshot, armed) {
+      const minutes = snapshot?.wrapUpMinutes ?? 10;
+      const window = snapshot?.wrapUpWindowMs;
+      const windowed = armed ? (window ?? minutes * 60_000) > 0 : minutes > 0;
+      if (!windowed) return t('bodyNoWrap');
+      const when = armed
+        ? t('whenArmed', { len: shortLeft(window ?? minutes * 60_000) })
+        : t('whenUnarmed', { n: String(minutes) });
+      return t('bodyWrap', { when });
     }
 
     const QUICK = [
@@ -205,8 +235,6 @@ window.__ModuleLoader__.load({
         /** Measured card, so placement uses the real height instead of a guess. */
         const cardRef = useRef(null);
         const [anchor, setAnchor] = useState(null);
-
-        const wrapMinutes = snapshot?.wrapUpMinutes ?? 10;
 
         const pull = useCallback(async () => {
           if (typeof sessionId !== 'string' || sessionId === '') {
@@ -449,7 +477,7 @@ window.__ModuleLoader__.load({
                   onClick: (event) => event.stopPropagation(),
                 },
                 h('div', { className: 'dsh-nw-h' }, t('title')),
-                h('p', { className: 'dsh-nw-sub' }, t('body', { n: String(wrapMinutes) })),
+                h('p', { className: 'dsh-nw-sub' }, subline(t, snapshot, armed)),
                 status,
                 dead
                   ? h(
